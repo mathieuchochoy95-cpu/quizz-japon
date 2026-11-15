@@ -53,6 +53,7 @@
 
   const app = document.getElementById('app');
   const DEJA_ENVOYE = localStorage.getItem('quiz_envoye_japon') === '1';
+  let docId = null;        // document Firestore de ce joueur, créé dès le prénom saisi
   let prenom = '';
   let index = 0;
   let reponses = [];
@@ -72,8 +73,21 @@
     document.getElementById('go').onclick = () => {
       const p = document.getElementById('prenom').value.trim();
       if (!p) { document.getElementById('err').textContent = "Entre ton prénom."; return; }
-      prenom = p; index = 0; reponses = []; valeur = null;
-      ecranQuestion();
+      document.getElementById('go').disabled = true;
+      // Le joueur apparaît tout de suite dans la page admin, avec le statut « en cours »
+      db.collection('reponses').add({
+        prenom: p,
+        reponses: [],
+        termine: false,
+        date: firebase.firestore.FieldValue.serverTimestamp()
+      }).then(ref => {
+        docId = ref.id;
+        prenom = p; index = 0; reponses = []; valeur = null;
+        ecranQuestion();
+      }).catch(err => {
+        document.getElementById('go').disabled = false;
+        document.getElementById('err').textContent = "Connexion impossible (" + (err.code || err.message) + "). Réessaie.";
+      });
     };
   }
 
@@ -97,7 +111,8 @@
       <p class="muted">Question ${index + 1} / ${QUESTIONS.length}</p>
       <h1>${echapper(q.q)}</h1>
       ${champ}
-      <button class="main" id="suite" ${valeur === null || valeur === '' ? 'disabled' : ''}>${dernier ? 'Envoyer mes réponses' : 'Suivant'}</button>`;
+      <button class="main" id="suite" ${valeur === null || valeur === '' ? 'disabled' : ''}>${dernier ? 'Envoyer mes réponses' : 'Suivant'}</button>
+      <div class="erreur" id="err"></div>`;
 
     const saisie = document.getElementById('saisie');
     if (saisie) {
@@ -112,27 +127,32 @@
         ecranQuestion();
       };
     });
-    document.getElementById('suite').onclick = () => {
-      if (valeur === null || valeur === '') return;
-      reponses[index] = q.type === 'nombre' ? Number(valeur) : valeur;
-      valeur = null;
-      if (dernier) envoyer(); else { index++; ecranQuestion(); }
-    };
+    document.getElementById('suite').onclick = () => valider(q, dernier);
   }
 
-  function envoyer() {
-    app.innerHTML = `<h1>Envoi en cours…</h1>`;
-    db.collection('reponses').add({
-      prenom: prenom,
-      reponses: reponses,
-      date: firebase.firestore.FieldValue.serverTimestamp()
+  // Enregistre la réponse tout de suite, puis passe à la question suivante
+  function valider(q, dernier) {
+    if (valeur === null || valeur === '') return;
+    const nouvelles = reponses.slice();
+    nouvelles[index] = q.type === 'nombre' ? Number(valeur) : valeur;
+    document.getElementById('suite').disabled = true;
+
+    db.collection('reponses').doc(docId).update({
+      reponses: nouvelles,
+      termine: dernier
     }).then(() => {
-      localStorage.setItem('quiz_envoye_japon', '1');
-      app.innerHTML = `<h1>Merci ${echapper(prenom)} !</h1><p class="muted">Tes réponses sont bien enregistrées.</p>`;
+      reponses = nouvelles;
+      valeur = null;
+      if (dernier) {
+        localStorage.setItem('quiz_envoye_japon', '1');
+        app.innerHTML = `<h1>Merci ${echapper(prenom)} !</h1><p class="muted">Tes réponses sont bien enregistrées.</p>`;
+      } else {
+        index++;
+        ecranQuestion();
+      }
     }).catch(err => {
-      app.innerHTML = `<h1>Erreur</h1><p class="erreur">L'envoi a échoué (${echapper(err.code || err.message)}). Réessaie.</p>
-        <button class="main" id="retry">Réessayer</button>`;
-      document.getElementById('retry').onclick = envoyer;
+      document.getElementById('suite').disabled = false;
+      document.getElementById('err').textContent = "Échec de l'enregistrement (" + (err.code || err.message) + "). Réessaie.";
     });
   }
 

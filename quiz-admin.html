@@ -16,10 +16,12 @@
   th:first-child,td:first-child{text-align:left}
   .ok{color:#15803d;font-weight:600}
   .ko{color:#b91c1c}
+  .attente{color:#9ca3af}
   .txt{font-size:.85rem;max-width:160px;margin:0 auto 4px;word-wrap:break-word}
   .muted{color:#6b7280;font-size:.9rem}
   .erreur{color:#b91c1c;margin-top:8px}
   .ligne-cle label{display:block;font-weight:600;margin-top:8px}
+  .live{display:inline-block;width:8px;height:8px;border-radius:50%;background:#15803d;margin-right:6px}
 </style>
 </head>
 <body>
@@ -37,7 +39,7 @@
   <div id="dashboard" style="display:none">
 
     <div class="card">
-      <h2 style="margin-top:0">Réponses en direct</h2>
+      <h2 style="margin-top:0"><span class="live"></span>Réponses en direct</h2>
       <p class="muted" id="compteur"></p>
       <div style="overflow-x:auto">
         <table>
@@ -45,7 +47,7 @@
           <tbody id="lignes"></tbody>
         </table>
       </div>
-      <p class="muted">Les questions 1, 4 et 6 sont à corriger à la main : cochez la case si la réponse est juste.</p>
+      <p class="muted">Les « … » grisés sont les questions pas encore répondues. Les questions 1, 4 et 6 se corrigent à la main : cochez la case si la réponse est juste.</p>
     </div>
 
     <div class="card">
@@ -195,23 +197,28 @@
         const rep = r.reponses ? r.reponses[i] : undefined;
         if (q.type === 'texte') {
           const coche = r.manuel && r.manuel[i] ? 'checked' : '';
-          return `<td><div class="txt">${echapper(rep ?? '–')}</div>
-            <input type="checkbox" class="manu" data-id="${r.id}" data-i="${i}" ${coche}></td>`;
+          const txt = rep === undefined ? '…' : echapper(rep);
+          return `<td class="${rep === undefined ? 'attente' : ''}"><div class="txt">${txt}</div>
+            ${rep === undefined ? '' : `<input type="checkbox" class="manu" data-id="${r.id}" data-i="${i}" ${coche}>`}</td>`;
         }
-        let affiche = rep ?? '–';
+        if (rep === undefined) return `<td class="attente">…</td>`;
+        let affiche = rep;
         if (q.type === 'choix' && typeof rep === 'number') affiche = q.c[rep];
         return `<td class="${r.detail[i] ? 'ok' : 'ko'}">${echapper(affiche)}</td>`;
       }).join('');
+      const statut = r.termine ? '' : ' <span class="muted">(en cours)</span>';
       return `<tr>
-        <td>${echapper(r.prenom || '?')}</td>
+        <td>${echapper(r.prenom || '?')}${statut}</td>
         <td><strong>${r.score}/${QUESTIONS.length}</strong></td>
         ${cellules}
         <td><button class="danger" data-id="${r.id}">Suppr.</button></td>
       </tr>`;
     }).join('');
 
+    const termines = lignes.filter(r => r.termine).length;
     document.getElementById('compteur').textContent =
-      `${lignes.length} participant(s).` + (CLE ? '' : ' Enregistrez les bonnes réponses ci-dessous pour activer la correction automatique.');
+      `${lignes.length} participant(s), dont ${termines} ont terminé.` +
+      (CLE ? '' : ' Enregistrez les bonnes réponses ci-dessous pour activer la correction automatique.');
   }
 
   function demarrer() {
