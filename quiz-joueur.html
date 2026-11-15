@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quiz Japon</title>
+<style>
+  body{font-family:system-ui,-apple-system,sans-serif;margin:0;background:#f4f5f7;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box}
+  .card{background:#fff;border-radius:14px;padding:24px;max-width:480px;width:100%;box-shadow:0 2px 12px rgba(0,0,0,.08);box-sizing:border-box}
+  h1{font-size:1.3rem;margin:0 0 16px}
+  .choix{display:block;width:100%;text-align:left;padding:14px;margin:8px 0;border:2px solid #d0d5dd;border-radius:10px;background:#fff;font-size:1rem;cursor:pointer}
+  .choix.sel{border-color:#2563eb;background:#eff6ff}
+  input{width:100%;padding:12px;font-size:1rem;border:2px solid #d0d5dd;border-radius:10px;box-sizing:border-box;margin-top:8px}
+  button.main{margin-top:16px;width:100%;padding:14px;font-size:1rem;border:0;border-radius:10px;background:#2563eb;color:#fff;cursor:pointer}
+  button.main:disabled{background:#9ca3af;cursor:default}
+  .progress{height:6px;background:#e5e7eb;border-radius:3px;margin-bottom:16px}
+  .progress div{height:100%;background:#2563eb;border-radius:3px;transition:width .3s}
+  .muted{color:#6b7280;font-size:.95rem}
+  .erreur{color:#b91c1c;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="card" id="app"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyAiliCkXadQ-LUJDXfFt7dT1lIdjLCz6Zs",
+    authDomain: "quizz-japon.firebaseapp.com",
+    projectId: "quizz-japon",
+    storageBucket: "quizz-japon.firebasestorage.app",
+    messagingSenderId: "908812075269",
+    appId: "1:908812075269:web:4a2021d87b675f6fb6f76c",
+    measurementId: "G-Z0Q7410R24"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+
+  // Types : "texte" (réponse libre), "nombre", "vf" (Vrai/Faux), "choix" (liste c[])
+  // Aucune bonne réponse ici : elles sont enregistrées depuis la page admin.
+  const QUESTIONS = [
+    { q: "Quelles sont les dates de notre voyage ?", type: "texte" },
+    { q: "Combien de villes on a faites ?", type: "nombre" },
+    { q: "Combien de voitures on a louées ?", type: "nombre" },
+    { q: "Point bonus : dans quelles villes ?", type: "texte" },
+    { q: "Combien de goshuins on a collectés ?", type: "nombre" },
+    { q: "Combien d'argent dépensé pour baggy, sachant qu'un essai est 100 yens ? (en yens)", type: "nombre" },
+    { q: "Vrai ou faux : on s'est trompé de lieu pour le combat de sumo.", type: "vf" },
+    { q: "Vrai ou faux : on a entendu un ours dans la forêt pendant une randonnée.", type: "vf" },
+    { q: "L'essence coûtait…", type: "choix", c: ["moins de 75 centimes", "entre 75 centimes et 1,25 €", "entre 1,25 € et 1,75 €"] }
+  ];
+
+  const app = document.getElementById('app');
+  const DEJA_ENVOYE = localStorage.getItem('quiz_envoye_japon') === '1';
+  let prenom = '';
+  let index = 0;
+  let reponses = [];
+  let valeur = null;
+
+  function echapper(s) {
+    return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  }
+
+  function ecranNom() {
+    app.innerHTML = `
+      <h1>Quiz Japon</h1>
+      <p class="muted">${QUESTIONS.length} questions. Entre ton prénom pour commencer.</p>
+      <input id="prenom" maxlength="30" placeholder="Ton prénom">
+      <button class="main" id="go">Commencer</button>
+      <div class="erreur" id="err"></div>`;
+    document.getElementById('go').onclick = () => {
+      const p = document.getElementById('prenom').value.trim();
+      if (!p) { document.getElementById('err').textContent = "Entre ton prénom."; return; }
+      prenom = p; index = 0; reponses = []; valeur = null;
+      ecranQuestion();
+    };
+  }
+
+  function ecranQuestion() {
+    const q = QUESTIONS[index];
+    const dernier = index === QUESTIONS.length - 1;
+    const pct = (index / QUESTIONS.length) * 100;
+    let champ = '';
+    if (q.type === 'texte') {
+      champ = `<input id="saisie" placeholder="Ta réponse" value="${echapper(valeur ?? '')}">`;
+    } else if (q.type === 'nombre') {
+      champ = `<input id="saisie" type="number" inputmode="decimal" placeholder="Un nombre" value="${valeur ?? ''}">`;
+    } else if (q.type === 'vf') {
+      champ = ['Vrai', 'Faux'].map(v => `<button class="choix${valeur === v ? ' sel' : ''}" data-v="${v}">${v}</button>`).join('');
+    } else {
+      champ = q.c.map((c, k) => `<button class="choix${valeur === k ? ' sel' : ''}" data-v="${k}">${echapper(c)}</button>`).join('');
+    }
+
+    app.innerHTML = `
+      <div class="progress"><div style="width:${pct}%"></div></div>
+      <p class="muted">Question ${index + 1} / ${QUESTIONS.length}</p>
+      <h1>${echapper(q.q)}</h1>
+      ${champ}
+      <button class="main" id="suite" ${valeur === null || valeur === '' ? 'disabled' : ''}>${dernier ? 'Envoyer mes réponses' : 'Suivant'}</button>`;
+
+    const saisie = document.getElementById('saisie');
+    if (saisie) {
+      saisie.oninput = () => {
+        valeur = saisie.value.trim();
+        document.getElementById('suite').disabled = valeur === '';
+      };
+    }
+    app.querySelectorAll('.choix').forEach(b => {
+      b.onclick = () => {
+        valeur = q.type === 'vf' ? b.dataset.v : Number(b.dataset.v);
+        ecranQuestion();
+      };
+    });
+    document.getElementById('suite').onclick = () => {
+      if (valeur === null || valeur === '') return;
+      reponses[index] = q.type === 'nombre' ? Number(valeur) : valeur;
+      valeur = null;
+      if (dernier) envoyer(); else { index++; ecranQuestion(); }
+    };
+  }
+
+  function envoyer() {
+    app.innerHTML = `<h1>Envoi en cours…</h1>`;
+    db.collection('reponses').add({
+      prenom: prenom,
+      reponses: reponses,
+      date: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(() => {
+      localStorage.setItem('quiz_envoye_japon', '1');
+      app.innerHTML = `<h1>Merci ${echapper(prenom)} !</h1><p class="muted">Tes réponses sont bien enregistrées.</p>`;
+    }).catch(err => {
+      app.innerHTML = `<h1>Erreur</h1><p class="erreur">L'envoi a échoué (${echapper(err.code || err.message)}). Réessaie.</p>
+        <button class="main" id="retry">Réessayer</button>`;
+      document.getElementById('retry').onclick = envoyer;
+    });
+  }
+
+  if (DEJA_ENVOYE) {
+    app.innerHTML = `<h1>Déjà répondu</h1><p class="muted">Tes réponses ont déjà été envoyées depuis cet appareil.</p>`;
+  } else {
+    ecranNom();
+  }
+</script>
+</body>
+</html>

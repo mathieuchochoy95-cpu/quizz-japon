@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin quiz Japon</title>
+<style>
+  body{font-family:system-ui,-apple-system,sans-serif;margin:0;background:#f4f5f7;padding:20px;color:#111}
+  .wrap{max-width:1100px;margin:0 auto}
+  .card{background:#fff;border-radius:14px;padding:20px;box-shadow:0 2px 12px rgba(0,0,0,.08);margin-bottom:16px}
+  input,select{width:100%;padding:10px;font-size:1rem;border:2px solid #d0d5dd;border-radius:8px;box-sizing:border-box;margin-bottom:10px}
+  button{padding:10px 16px;font-size:.95rem;border:0;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer}
+  button.danger{background:#b91c1c;padding:4px 10px;font-size:.85rem}
+  table{width:100%;border-collapse:collapse;font-size:.9rem}
+  th,td{padding:8px;border-bottom:1px solid #e5e7eb;text-align:center;vertical-align:top}
+  th:first-child,td:first-child{text-align:left}
+  .ok{color:#15803d;font-weight:600}
+  .ko{color:#b91c1c}
+  .txt{font-size:.85rem;max-width:160px;margin:0 auto 4px;word-wrap:break-word}
+  .muted{color:#6b7280;font-size:.9rem}
+  .erreur{color:#b91c1c;margin-top:8px}
+  .ligne-cle label{display:block;font-weight:600;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Connexion -->
+  <div class="card" id="login" style="max-width:380px;margin:60px auto">
+    <h2 style="margin-top:0">Connexion admin</h2>
+    <input id="email" type="email" placeholder="Email">
+    <input id="mdp" type="password" placeholder="Mot de passe">
+    <button id="btnLogin">Se connecter</button>
+    <div class="erreur" id="loginErr"></div>
+  </div>
+
+  <div id="dashboard" style="display:none">
+
+    <div class="card">
+      <h2 style="margin-top:0">Réponses en direct</h2>
+      <p class="muted" id="compteur"></p>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr id="entete"></tr></thead>
+          <tbody id="lignes"></tbody>
+        </table>
+      </div>
+      <p class="muted">Les questions 1, 4 et 6 sont à corriger à la main : cochez la case si la réponse est juste.</p>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0">Bonnes réponses</h2>
+      <p class="muted">Enregistrées dans Firestore, jamais visibles par les joueurs. Laissez vide les questions à corriger à la main.</p>
+      <div id="editeur"></div>
+    </div>
+
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyAiliCkXadQ-LUJDXfFt7dT1lIdjLCz6Zs",
+    authDomain: "quizz-japon.firebaseapp.com",
+    projectId: "quizz-japon",
+    storageBucket: "quizz-japon.firebasestorage.app",
+    messagingSenderId: "908812075269",
+    appId: "1:908812075269:web:4a2021d87b675f6fb6f76c",
+    measurementId: "G-Z0Q7410R24"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+  const db = firebase.firestore();
+
+  // Mêmes questions et types que dans quiz-joueur.html (sans les réponses)
+  const QUESTIONS = [
+    { q: "Quelles sont les dates de notre voyage ?", type: "texte" },
+    { q: "Combien de villes on a faites ?", type: "nombre" },
+    { q: "Combien de voitures on a louées ?", type: "nombre" },
+    { q: "Point bonus : dans quelles villes ?", type: "texte" },
+    { q: "Combien de goshuins on a collectés ?", type: "nombre" },
+    { q: "Combien d'argent dépensé pour baggy, sachant qu'un essai est 100 yens ? (en yens)", type: "nombre" },
+    { q: "Vrai ou faux : on s'est trompé de lieu pour le combat de sumo.", type: "vf" },
+    { q: "Vrai ou faux : on a entendu un ours dans la forêt pendant une randonnée.", type: "vf" },
+    { q: "L'essence coûtait…", type: "choix", c: ["moins de 75 centimes", "entre 75 centimes et 1,25 €", "entre 1,25 € et 1,75 €"] }
+  ];
+
+  let CLE = null;          // tableau des bonnes réponses (chaînes), chargé depuis Firestore
+  let DOCS = [];           // réponses des joueurs
+  let editeurRempli = false;
+
+  function echapper(s) {
+    return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  }
+  function normaliser(x) {
+    return String(x ?? '').trim().toLowerCase();
+  }
+
+  // Connexion
+  document.getElementById('btnLogin').onclick = () => {
+    const email = document.getElementById('email').value.trim();
+    const mdp = document.getElementById('mdp').value;
+    auth.signInWithEmailAndPassword(email, mdp).catch(err => {
+      document.getElementById('loginErr').textContent = "Connexion refusée : " + (err.code || err.message);
+    });
+  };
+
+  auth.onAuthStateChanged(user => {
+    if (user) {
+      document.getElementById('login').style.display = 'none';
+      document.getElementById('dashboard').style.display = 'block';
+      construireEditeur();
+      demarrer();
+    } else {
+      document.getElementById('login').style.display = 'block';
+      document.getElementById('dashboard').style.display = 'none';
+    }
+  });
+
+  // Éditeur des bonnes réponses
+  function construireEditeur() {
+    document.getElementById('editeur').innerHTML = QUESTIONS.map((q, i) => {
+      let champ;
+      if (q.type === 'texte') {
+        champ = `<em class="muted">Corrigée à la main dans le tableau</em>`;
+      } else if (q.type === 'nombre') {
+        champ = `<input type="number" id="cle${i}">`;
+      } else if (q.type === 'vf') {
+        champ = `<select id="cle${i}"><option value="">-- choisir --</option><option value="Vrai">Vrai</option><option value="Faux">Faux</option></select>`;
+      } else {
+        champ = `<select id="cle${i}"><option value="">-- choisir --</option>${q.c.map((c, k) => `<option value="${k}">${echapper(c)}</option>`).join('')}</select>`;
+      }
+      return `<div class="ligne-cle"><label>Q${i + 1}. ${echapper(q.q)}</label>${champ}</div>`;
+    }).join('') + `<button id="sauver">Enregistrer les bonnes réponses</button><div id="msgCle" class="muted" style="margin-top:8px"></div>`;
+    document.getElementById('sauver').onclick = sauverCle;
+
+    document.getElementById('lignes').onclick = e => {
+      if (e.target.classList.contains('danger')) {
+        if (confirm('Supprimer cette réponse ?')) {
+          db.collection('reponses').doc(e.target.dataset.id).delete();
+        }
+      }
+    };
+    document.getElementById('lignes').onchange = e => {
+      const c = e.target;
+      if (c.classList.contains('manu')) {
+        db.collection('reponses').doc(c.dataset.id).update({ ['manuel.' + c.dataset.i]: c.checked });
+      }
+    };
+  }
+
+  function sauverCle() {
+    const valeurs = QUESTIONS.map((q, i) => {
+      if (q.type === 'texte') return '';
+      return document.getElementById('cle' + i).value;
+    });
+    db.collection('quiz').doc('cle').set({ valeurs: valeurs })
+      .then(() => { document.getElementById('msgCle').textContent = 'Bonnes réponses enregistrées.'; })
+      .catch(err => { document.getElementById('msgCle').textContent = 'Erreur : ' + err.message; });
+  }
+
+  function remplirEditeur() {
+    CLE.forEach((v, i) => {
+      const el = document.getElementById('cle' + i);
+      if (el && QUESTIONS[i].type !== 'texte') el.value = v;
+    });
+  }
+
+  // Correction
+  function estCorrect(r, i) {
+    const q = QUESTIONS[i];
+    if (q.type === 'texte') return (r.manuel && r.manuel[i]) === true;
+    if (!CLE) return false;
+    const bonne = normaliser(CLE[i]);
+    return bonne !== '' && normaliser(r.reponses && r.reponses[i]) === bonne;
+  }
+
+  function rendre() {
+    const lignes = DOCS.map(d => {
+      const r = { id: d.id, ...d.data() };
+      const detail = QUESTIONS.map((_, i) => estCorrect(r, i));
+      return { ...r, detail, score: detail.filter(Boolean).length };
+    });
+    lignes.sort((a, b) => b.score - a.score ||
+      (a.date?.toMillis?.() || 0) - (b.date?.toMillis?.() || 0));
+
+    document.getElementById('entete').innerHTML =
+      `<th>Prénom</th><th>Score</th>` +
+      QUESTIONS.map((_, i) => `<th>Q${i + 1}</th>`).join('') + `<th></th>`;
+
+    document.getElementById('lignes').innerHTML = lignes.map(r => {
+      const cellules = QUESTIONS.map((q, i) => {
+        const rep = r.reponses ? r.reponses[i] : undefined;
+        if (q.type === 'texte') {
+          const coche = r.manuel && r.manuel[i] ? 'checked' : '';
+          return `<td><div class="txt">${echapper(rep ?? '–')}</div>
+            <input type="checkbox" class="manu" data-id="${r.id}" data-i="${i}" ${coche}></td>`;
+        }
+        let affiche = rep ?? '–';
+        if (q.type === 'choix' && typeof rep === 'number') affiche = q.c[rep];
+        return `<td class="${r.detail[i] ? 'ok' : 'ko'}">${echapper(affiche)}</td>`;
+      }).join('');
+      return `<tr>
+        <td>${echapper(r.prenom || '?')}</td>
+        <td><strong>${r.score}/${QUESTIONS.length}</strong></td>
+        ${cellules}
+        <td><button class="danger" data-id="${r.id}">Suppr.</button></td>
+      </tr>`;
+    }).join('');
+
+    document.getElementById('compteur').textContent =
+      `${lignes.length} participant(s).` + (CLE ? '' : ' Enregistrez les bonnes réponses ci-dessous pour activer la correction automatique.');
+  }
+
+  function demarrer() {
+    db.collection('quiz').doc('cle').onSnapshot(s => {
+      CLE = s.exists ? (s.data().valeurs || null) : null;
+      if (CLE && !editeurRempli) { remplirEditeur(); editeurRempli = true; }
+      rendre();
+    });
+    db.collection('reponses').onSnapshot(s => {
+      DOCS = s.docs;
+      rendre();
+    }, err => {
+      document.getElementById('compteur').textContent = 'Erreur de lecture : ' + err.message;
+    });
+  }
+</script>
+</body>
+</html>
